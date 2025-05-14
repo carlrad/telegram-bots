@@ -1,0 +1,37 @@
+### STRUCTURE ###
+
+telegram_agents/
+├── .env                    # Environment variables
+├── config.py               # Configuration settings
+├── main.py                 # Entry point
+├── bot/
+│   ├── __init__.py
+│   ├── handlers.py         # Telegram command handlers
+│   └── utils.py            # Helper functions for the bot
+├── agents/
+│   ├── __init__.py
+│   ├── base.py             # Base agent class
+│   ├── assistant.py        # Default assistant agent
+│   ├── chef.py             # Chef agent
+│   ├── fitness.py          # Fitness coach agent
+│   └── programmer.py       # Developer agent
+└── services/
+    ├── __init__.py
+    └── openai_service.py   # OpenAI API interactions
+
+
+Adding new agents is much simpler now:
+
+Create a new agent file in the agents/ directory
+Implement the agent class extending the base Agent class
+Register the agent in agents/__init__.py
+
+### IDEAS ###
+
+1. Agent to help with company financial research. It should search the web for official 
+financial sources and pull these together into a useful summary to show headline performance.
+As an additional step, it should monitor companies I follow on companies house and notify me when
+a company I follow has uploaded financial statements to companies house along with a simple summary
+2. Agent to help with UK and US tax returns. Would need access to google drive and docs inc. 
+pdfs to read and help me structure my return
+3. Training agents to help with cycling and climbing
