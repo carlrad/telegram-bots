@@ -242,7 +242,57 @@ Servings: {servings}
 1. [Step 1]
 2. [Step 2]
 
-[Repeat for each day's recipe]
+## Tuesday: [Meal Name]
+Preparation Time: XX minutes
+Cooking Time: XX minutes
+Servings: {servings}
+
+### Ingredients:
+- [Quantity] [Ingredient 1]
+- [Quantity] [Ingredient 2]
+
+### Instructions:
+1. [Step 1]
+2. [Step 2]
+
+## Wednesday: [Meal Name]
+Preparation Time: XX minutes
+Cooking Time: XX minutes
+Servings: {servings}
+
+### Ingredients:
+- [Quantity] [Ingredient 1]
+- [Quantity] [Ingredient 2]
+
+### Instructions:
+1. [Step 1]
+2. [Step 2]
+
+## Thursday: [Meal Name]
+Preparation Time: XX minutes
+Cooking Time: XX minutes
+Servings: {servings}
+
+### Ingredients:
+- [Quantity] [Ingredient 1]
+- [Quantity] [Ingredient 2]
+
+### Instructions:
+1. [Step 1]
+2. [Step 2]
+
+## Friday: [Meal Name]
+Preparation Time: XX minutes
+Cooking Time: XX minutes
+Servings: {servings}
+
+### Ingredients:
+- [Quantity] [Ingredient 1]
+- [Quantity] [Ingredient 2]
+
+### Instructions:
+1. [Step 1]
+2. [Step 2]
 
 Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredients when possible.
 """
@@ -290,13 +340,13 @@ Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredi
             
             if recipes_match:
                 recipes_text = recipes_match.group(0)
-                # Extract individual recipes
-                recipe_blocks = re.split(r'##\s+\w+day:\s+', recipes_text)[1:]  # Skip header
+                # Find all day sections (Monday through Friday)
+                day_sections = re.findall(r'##\s+(\w+day):\s+(.+?)(?=##\s+\w+day:|\Z)', recipes_text + "##", re.DOTALL)
                 
-                for recipe_block in recipe_blocks:
+                for day, recipe_block in day_sections:
                     recipe = {}
                     
-                    # Extract recipe name
+                    # Extract recipe name from the first line
                     name_match = re.match(r'(.+?)(?:\n|$)', recipe_block)
                     if name_match:
                         recipe["name"] = name_match.group(1).strip()
@@ -326,6 +376,9 @@ Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredi
                         instructions_text = instructions_match.group(1)
                         instructions = re.findall(r'\d+\.\s+(.+)', instructions_text)
                         recipe["instructions"] = [instruction.strip() for instruction in instructions]
+                    
+                    # Add day information
+                    recipe["day"] = day
                     
                     structured_plan["recipes"].append(recipe)
         else:
@@ -347,13 +400,36 @@ Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredi
             # Extract recipes
             if len(sections) > 3:
                 recipes_text = sections[3].strip()
-                recipe_blocks = re.split(r'##\s+\w+day:\s+', recipes_text)
                 
-                for recipe_block in recipe_blocks[1:]:  # Skip header
-                    recipe = {}
+                # Improved way to split recipe sections for all days
+                day_patterns = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+                
+                # Find all day markers in the text
+                day_positions = []
+                for day in day_patterns:
+                    pattern = rf'##\s+{day}:'
+                    for match in re.finditer(pattern, recipes_text):
+                        day_positions.append((match.start(), day))
+                
+                # Sort by position
+                day_positions.sort()
+                
+                # Extract content between day markers
+                for i, (pos, day) in enumerate(day_positions):
+                    # Determine the end position (either next day or end of text)
+                    if i < len(day_positions) - 1:
+                        end_pos = day_positions[i+1][0]
+                    else:
+                        end_pos = len(recipes_text)
                     
-                    # Extract recipe name
-                    name_match = re.match(r'(.+?)(?:\n|$)', recipe_block)
+                    # Extract the recipe block
+                    recipe_block = recipes_text[pos:end_pos]
+                    
+                    recipe = {}
+                    recipe["day"] = day
+                    
+                    # Extract recipe name (after the day)
+                    name_match = re.search(rf'##\s+{day}:\s+(.+?)(?:\n|$)', recipe_block)
                     if name_match:
                         recipe["name"] = name_match.group(1).strip()
                     
@@ -384,6 +460,41 @@ Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredi
                         recipe["instructions"] = [instruction.strip() for instruction in instructions]
                     
                     structured_plan["recipes"].append(recipe)
+        
+        # Ensure we have entries for all five weekdays
+        weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        existing_days = {recipe.get("day") for recipe in structured_plan["recipes"]}
+        
+        # Make sure we have all days (even if empty)
+        for day in weekdays:
+            if day not in existing_days:
+                # Look for the day in the summary
+                day_meal = next((item for item in structured_plan["summary"] if item["day"] == day), None)
+                
+                if day_meal:
+                    structured_plan["recipes"].append({
+                        "day": day,
+                        "name": day_meal["meal"],
+                        "prep_time": 0,
+                        "cook_time": 0,
+                        "servings": 0,
+                        "ingredients": [],
+                        "instructions": ["Recipe details not available"]
+                    })
+                else:
+                    structured_plan["recipes"].append({
+                        "day": day,
+                        "name": "Meal not specified",
+                        "prep_time": 0,
+                        "cook_time": 0,
+                        "servings": 0,
+                        "ingredients": [],
+                        "instructions": ["Recipe details not available"]
+                    })
+        
+        # Sort recipes by day of the week
+        day_order = {day: i for i, day in enumerate(weekdays)}
+        structured_plan["recipes"].sort(key=lambda x: day_order.get(x.get("day", ""), 999))
         
         return structured_plan
     
@@ -424,10 +535,13 @@ Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredi
         # Format recipes
         output.append("# 3. DETAILED RECIPES")
         if structured_plan["recipes"]:
-            for i, recipe in enumerate(structured_plan["recipes"]):
-                day = structured_plan["summary"][i]["day"] if i < len(structured_plan["summary"]) else f"Day {i+1}"
-                
-                output.append(f"## {day}: {recipe.get('name', 'Unnamed Recipe')}")
+            # Make sure recipes are sorted by day of the week
+            weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+            day_order = {day: i for i, day in enumerate(weekdays)}
+            recipes = sorted(structured_plan["recipes"], key=lambda x: day_order.get(x.get("day", ""), 999))
+            
+            for recipe in recipes:
+                output.append(f"## {recipe.get('day', 'Day')}: {recipe.get('name', 'Unnamed Recipe')}")
                 
                 if "prep_time" in recipe:
                     output.append(f"Preparation Time: {recipe['prep_time']} minutes")
