@@ -157,7 +157,7 @@ async def meal_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Use a longer max_tokens value for meal plans since they're comprehensive
         meal_plan = openai_service.generate_response(
             messages=messages,
-            max_tokens=2000,
+            max_tokens=4000,
             temperature=0.7
         )
         
