@@ -501,72 +501,85 @@ Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredi
     def format_structured_meal_plan(self, structured_plan):
         """
         Format a structured meal plan into a nicely formatted text representation.
+        Split into multiple message parts to avoid Telegram message size limits.
         
         Args:
             structured_plan (dict): Structured meal plan
             
         Returns:
-            str: Formatted meal plan text
+            list: List of message parts to be sent separately
         """
-        output = []
+        message_parts = []
+        
+        # Part 1: Summary and shopping list
+        part1 = []
         
         # Format summary
-        output.append("# 1. MEAL PLAN SUMMARY")
+        part1.append("# 1. MEAL PLAN SUMMARY")
         if structured_plan["summary"]:
             for meal in structured_plan["summary"]:
-                output.append(f"{meal['day']}: {meal['meal']}")
+                part1.append(f"{meal['day']}: {meal['meal']}")
         else:
-            output.append("No meal summary available.")
+            part1.append("No meal summary available.")
         
-        output.append("")  # Empty line
+        part1.append("")  # Empty line
         
         # Format shopping list
-        output.append("# 2. SHOPPING LIST")
+        part1.append("# 2. SHOPPING LIST")
         if structured_plan["shopping_list"]:
             for category, items in structured_plan["shopping_list"].items():
-                output.append(f"## {category}")
+                part1.append(f"## {category}")
                 for item in items:
-                    output.append(f"- {item}")
-                output.append("")  # Empty line
+                    part1.append(f"- {item}")
+                part1.append("")  # Empty line
         else:
-            output.append("No shopping list available.")
-            output.append("")  # Empty line
+            part1.append("No shopping list available.")
+            part1.append("")  # Empty line
         
-        # Format recipes
-        output.append("# 3. DETAILED RECIPES")
+        message_parts.append("\n".join(part1))
+        
+        # Part 2: Recipes (split into individual days)
         if structured_plan["recipes"]:
             # Make sure recipes are sorted by day of the week
             weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
             day_order = {day: i for i, day in enumerate(weekdays)}
             recipes = sorted(structured_plan["recipes"], key=lambda x: day_order.get(x.get("day", ""), 999))
             
+            # Add header for first recipe message
+            recipe_intro = ["# 3. DETAILED RECIPES"]
+            message_parts.append("\n".join(recipe_intro))
+            
+            # Process each day as a separate message
             for recipe in recipes:
-                output.append(f"## {recipe.get('day', 'Day')}: {recipe.get('name', 'Unnamed Recipe')}")
+                day_recipe = []
+                day_recipe.append(f"## {recipe.get('day', 'Day')}: {recipe.get('name', 'Unnamed Recipe')}")
                 
                 if "prep_time" in recipe:
-                    output.append(f"Preparation Time: {recipe['prep_time']} minutes")
+                    day_recipe.append(f"Preparation Time: {recipe['prep_time']} minutes")
                 if "cook_time" in recipe:
-                    output.append(f"Cooking Time: {recipe['cook_time']} minutes")
+                    day_recipe.append(f"Cooking Time: {recipe['cook_time']} minutes")
                 if "servings" in recipe:
-                    output.append(f"Servings: {recipe['servings']}")
+                    day_recipe.append(f"Servings: {recipe['servings']}")
                 
-                output.append("")  # Empty line
+                day_recipe.append("")  # Empty line
                 
                 if "ingredients" in recipe:
-                    output.append("### Ingredients:")
+                    day_recipe.append("### Ingredients:")
                     for ingredient in recipe["ingredients"]:
-                        output.append(f"- {ingredient}")
-                    output.append("")  # Empty line
+                        day_recipe.append(f"- {ingredient}")
+                    day_recipe.append("")  # Empty line
                 
                 if "instructions" in recipe:
-                    output.append("### Instructions:")
+                    day_recipe.append("### Instructions:")
                     for i, instruction in enumerate(recipe["instructions"], 1):
-                        output.append(f"{i}. {instruction}")
-                    output.append("")  # Empty line
+                        day_recipe.append(f"{i}. {instruction}")
+                    day_recipe.append("")  # Empty line
+                
+                message_parts.append("\n".join(day_recipe))
         else:
-            output.append("No recipes available.")
+            message_parts.append("No recipes available.")
         
-        return "\n".join(output)
+        return message_parts
     
     def generate_weekly_meal_plan(self, 
                                    preferences=None, 
