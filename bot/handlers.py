@@ -5,6 +5,7 @@ Telegram bot handlers for processing commands and messages.
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+import asyncio
 
 from agents import get_agent_config, get_all_agents
 from services import openai_service
@@ -104,61 +105,63 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def meal_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Generate a weekly meal plan."""
+    """Generate and send a personalized meal plan."""
     user_id = update.effective_user.id
+    
+    # Get user data using your utility function
     user_data = get_user_data(user_id)
     
-    # Set the current agent to chef
+    # Force agent to be chef
     user_data["current_agent"] = "chef"
     update_user_data(user_id, user_data)
     
-    # Get preferences from command arguments if provided
-    preferences = []
-    restrictions = []
-    servings = 4
-    
-    if context.args:
-        for arg in context.args:
-            if arg.startswith("pref:"):
-                preferences.append(arg[5:])
-            elif arg.startswith("avoid:"):
-                restrictions.append(arg[6:])
-            elif arg.startswith("servings:"):
-                try:
-                    servings = int(arg[9:])
-                except ValueError:
-                    pass
-    
-    # Import the chef agent class directly
-    from agents.chef import ChefAgent
-    chef_agent = ChefAgent()
-    
-    # Create a specialized prompt for meal planning
-    meal_plan_prompt = chef_agent.format_meal_plan_prompt(
-        preferences=preferences,
-        restrictions=restrictions,
-        servings=servings
-    )
-    
     await update.message.reply_text(
-        "I'm creating a weekly meal plan for you. This might take a minute..."
+        "Chef Gordon is preparing a personalized meal plan. This will take a moment..."
     )
     
     # Send typing action
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
-    # Create system message with the chef's system prompt
-    messages = [
-        {"role": "system", "content": chef_agent.system_prompt},
-        {"role": "user", "content": meal_plan_prompt}
-    ]
-    
     try:
-        # Use a longer max_tokens value for meal plans since they're comprehensive
-        meal_plan = openai_service.generate_response(
+        # Import the chef agent class directly
+        from agents.chef import ChefAgent
+        chef_agent = ChefAgent()
+        
+        # Get preferences from command arguments if provided
+        preferences = []
+        restrictions = []
+        servings = 4
+        
+        if context.args:
+            for arg in context.args:
+                if arg.startswith("pref:"):
+                    preferences.append(arg[5:])
+                elif arg.startswith("avoid:"):
+                    restrictions.append(arg[6:])
+                elif arg.startswith("servings:"):
+                    try:
+                        servings = int(arg[9:])
+                    except ValueError:
+                        pass
+        
+        # Create a specialized prompt for meal planning
+        meal_plan_prompt = chef_agent.format_meal_plan_prompt(
+            preferences=preferences if preferences else None,
+            restrictions=restrictions if restrictions else None,
+            servings=servings
+        )
+        
+        # Create system message with the chef's system prompt
+        messages = [
+            {"role": "system", "content": chef_agent.system_prompt},
+            {"role": "user", "content": meal_plan_prompt}
+        ]
+        
+        # Call OpenAI API through your service
+        raw_meal_plan = openai_service.generate_response(
             messages=messages,
-            max_tokens=4000,
-            temperature=0.7
+            max_tokens=2000,  # Increased token limit
+            temperature=chef_agent.temperature
         )
         
         # Add to conversation history
@@ -166,36 +169,22 @@ async def meal_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             user_data["conversations"]["chef"] = []
         
         user_data["conversations"]["chef"].append({"role": "user", "content": meal_plan_prompt})
-        user_data["conversations"]["chef"].append({"role": "assistant", "content": meal_plan})
+        user_data["conversations"]["chef"].append({"role": "assistant", "content": raw_meal_plan})
         update_user_data(user_id, user_data)
         
-        # Split the meal plan into multiple messages if it's too long
-        # Telegram has a 4096 character limit per message
-        if len(meal_plan) > 4000:
-            # Send an initial message
-            await update.message.reply_text(
-                "Here's your weekly meal plan! (I'll send it in multiple parts because it's quite detailed)"
-            )
-            
-            # Split by days or sections
-            parts = meal_plan.split("\n\n## ")
-            if len(parts) == 1:  # If no ## headers, try splitting differently
-                parts = meal_plan.split("\n\n# ")
-            
-            if len(parts) == 1:  # If still no clear divisions, just split by character count
-                parts = [meal_plan[i:i+3900] for i in range(0, len(meal_plan), 3900)]
-            
-            # Send first part
-            first_part = parts[0]
-            await update.message.reply_text(first_part)
-            
-            # Send the rest with headers reattached
-            for i, part in enumerate(parts[1:], 1):
-                await update.message.reply_text(f"## {part}")
-        else:
-            # Send as a single message
-            await update.message.reply_text(meal_plan)
+        # Parse the response
+        structured_plan = chef_agent.parse_meal_plan_response(raw_meal_plan)
         
+        # Format the structured plan into multiple messages
+        message_parts = chef_agent.format_structured_meal_plan(structured_plan)
+        
+        # Send each part as a separate message
+        for part in message_parts:
+            if part.strip():  # Only send non-empty parts
+                await update.message.reply_text(part)
+                # Brief delay to maintain message order
+                await asyncio.sleep(0.5)
+                
     except Exception as e:
         logger.error(f"Error generating meal plan: {e}")
         await update.message.reply_text(
