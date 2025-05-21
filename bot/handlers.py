@@ -178,6 +178,11 @@ async def meal_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Format the structured plan into multiple messages
         message_parts = chef_agent.format_structured_meal_plan(structured_plan)
         
+        # Log information about the message parts
+        logger.info(f"Meal plan split into {len(message_parts)} parts")
+        for i, part in enumerate(message_parts):
+            logger.info(f"Part {i+1} length: {len(part)} characters")
+        
         # Send each part as a separate message
         for part in message_parts:
             if part.strip():  # Only send non-empty parts
@@ -269,41 +274,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         try:
             # Use a longer max_tokens value for meal plans
-            meal_plan = openai_service.generate_response(
+            raw_meal_plan = openai_service.generate_response(
                 messages=messages,
                 max_tokens=2000,
                 temperature=0.7
             )
             
             # Add to conversation history
-            user_data["conversations"]["chef"].append({"role": "assistant", "content": meal_plan})
+            user_data["conversations"]["chef"].append({"role": "assistant", "content": raw_meal_plan})
             update_user_data(user_id, user_data)
             
-            # Split the meal plan into multiple messages if it's too long
-            if len(meal_plan) > 4000:
-                # Send an initial message
-                await update.message.reply_text(
-                    "Here's your weekly meal plan! (I'll send it in multiple parts because it's quite detailed)"
-                )
-                
-                # Split by days or sections
-                parts = meal_plan.split("\n\n## ")
-                if len(parts) == 1:  # If no ## headers, try splitting differently
-                    parts = meal_plan.split("\n\n# ")
-                
-                if len(parts) == 1:  # If still no clear divisions, just split by character count
-                    parts = [meal_plan[i:i+3900] for i in range(0, len(meal_plan), 3900)]
-                
-                # Send first part
-                first_part = parts[0]
-                await update.message.reply_text(first_part)
-                
-                # Send the rest with headers reattached
-                for i, part in enumerate(parts[1:], 1):
-                    await update.message.reply_text(f"## {part}")
-            else:
-                # Send as a single message
-                await update.message.reply_text(meal_plan)
+            # Parse the response
+            structured_plan = chef_agent.parse_meal_plan_response(raw_meal_plan)
+            
+            # Format the structured plan into multiple messages
+            message_parts = chef_agent.format_structured_meal_plan(structured_plan)
+            
+            # Log information about the message parts
+            logger.info(f"Meal plan split into {len(message_parts)} parts")
+            for i, part in enumerate(message_parts):
+                logger.info(f"Part {i+1} length: {len(part)} characters")
+            
+            # Send each part as a separate message
+            for part in message_parts:
+                if part.strip():  # Only send non-empty parts
+                    await update.message.reply_text(part)
+                    # Brief delay to maintain message order
+                    await asyncio.sleep(0.5)
             
             return
             

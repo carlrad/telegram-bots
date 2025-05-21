@@ -536,7 +536,38 @@ Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredi
             part1.append("No shopping list available.")
             part1.append("")  # Empty line
         
-        message_parts.append("\n".join(part1))
+        # Check if part1 is below Telegram's message size limit (4096 characters)
+        part1_text = "\n".join(part1)
+        if len(part1_text) > 4000:
+            # If too large, split into smaller parts
+            summary_part = [
+                "# 1. MEAL PLAN SUMMARY"
+            ]
+            if structured_plan["summary"]:
+                for meal in structured_plan["summary"]:
+                    summary_part.append(f"{meal['day']}: {meal['meal']}")
+            else:
+                summary_part.append("No meal summary available.")
+            
+            message_parts.append("\n".join(summary_part))
+            
+            # Split shopping list by categories
+            if structured_plan["shopping_list"]:
+                # Add header for shopping list
+                shopping_header = ["# 2. SHOPPING LIST"]
+                message_parts.append("\n".join(shopping_header))
+                
+                for category, items in structured_plan["shopping_list"].items():
+                    category_part = [f"## {category}"]
+                    for item in items:
+                        category_part.append(f"- {item}")
+                    category_part.append("")  # Empty line
+                    
+                    message_parts.append("\n".join(category_part))
+            else:
+                message_parts.append("No shopping list available.")
+        else:
+            message_parts.append(part1_text)
         
         # Part 2: Recipes (split into individual days)
         if structured_plan["recipes"]:
@@ -575,11 +606,80 @@ Ensure all meals can be prepared in 40 minutes or less, and use seasonal ingredi
                         day_recipe.append(f"{i}. {instruction}")
                     day_recipe.append("")  # Empty line
                 
-                message_parts.append("\n".join(day_recipe))
+                # Check if this recipe is below Telegram's limit
+                day_recipe_text = "\n".join(day_recipe)
+                if len(day_recipe_text) > 4000:
+                    # Split the recipe into smaller parts
+                    header_part = [
+                        f"## {recipe.get('day', 'Day')}: {recipe.get('name', 'Unnamed Recipe')}"
+                    ]
+                    
+                    if "prep_time" in recipe:
+                        header_part.append(f"Preparation Time: {recipe['prep_time']} minutes")
+                    if "cook_time" in recipe:
+                        header_part.append(f"Cooking Time: {recipe['cook_time']} minutes")
+                    if "servings" in recipe:
+                        header_part.append(f"Servings: {recipe['servings']}")
+                    
+                    message_parts.append("\n".join(header_part))
+                    
+                    # Ingredients as a separate part if they exist
+                    if "ingredients" in recipe and recipe["ingredients"]:
+                        ingredients_part = ["### Ingredients:"]
+                        for ingredient in recipe["ingredients"]:
+                            ingredients_part.append(f"- {ingredient}")
+                        
+                        message_parts.append("\n".join(ingredients_part))
+                    
+                    # Instructions may need to be split if there are many
+                    if "instructions" in recipe and recipe["instructions"]:
+                        # First check if all instructions together are too large
+                        instructions_part = ["### Instructions:"]
+                        for i, instruction in enumerate(recipe["instructions"], 1):
+                            instructions_part.append(f"{i}. {instruction}")
+                        
+                        instructions_text = "\n".join(instructions_part)
+                        if len(instructions_text) > 4000:
+                            # If too large, split instructions into chunks
+                            message_parts.append("### Instructions:")
+                            
+                            # Process instructions in chunks
+                            instructions_chunk = []
+                            current_chunk_size = 0
+                            for i, instruction in enumerate(recipe["instructions"], 1):
+                                instruction_line = f"{i}. {instruction}"
+                                if current_chunk_size + len(instruction_line) + 1 > 3900:  # +1 for newline
+                                    if instructions_chunk:  # Send current chunk
+                                        message_parts.append("\n".join(instructions_chunk))
+                                    instructions_chunk = [instruction_line]
+                                    current_chunk_size = len(instruction_line)
+                                else:
+                                    instructions_chunk.append(instruction_line)
+                                    current_chunk_size += len(instruction_line) + 1
+                            
+                            # Send any remaining instructions
+                            if instructions_chunk:
+                                message_parts.append("\n".join(instructions_chunk))
+                        else:
+                            # If it fits, send all instructions together
+                            message_parts.append(instructions_text)
+                else:
+                    # If the complete recipe fits in one message, send it as is
+                    message_parts.append(day_recipe_text)
         else:
             message_parts.append("No recipes available.")
         
-        return message_parts
+        # Final check for any part that might still exceed the limit
+        final_parts = []
+        for part in message_parts:
+            if len(part) > 4000:
+                # Split into chunks of max 3900 characters (leaving some margin)
+                chunks = [part[i:i+3900] for i in range(0, len(part), 3900)]
+                final_parts.extend(chunks)
+            else:
+                final_parts.append(part)
+        
+        return final_parts
     
     def generate_weekly_meal_plan(self, 
                                    preferences=None, 
