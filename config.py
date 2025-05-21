@@ -25,3 +25,9 @@ DEFAULT_MAX_TOKENS = 500
 
 # Conversation settings
 MAX_HISTORY_LENGTH = 10  # Maximum number of messages to keep in history
+
+# List of approved Telegram user IDs
+ALLOWED_USERS = [
+    7145697323,  # Your Telegram ID
+    # Add more IDs as needed
+]

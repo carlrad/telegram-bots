@@ -10,11 +10,26 @@ import asyncio
 from agents import get_agent_config, get_all_agents
 from services import openai_service
 from bot.utils import get_user_data, update_user_data
+import config
 
 logger = logging.getLogger(__name__)
 
+async def check_authorization(update: Update) -> bool:
+    """Check if the user is authorized to use the bot."""
+    user_id = update.effective_user.id
+    if user_id not in config.ALLOWED_USERS:
+        logger.warning(f"Unauthorized access attempt from user ID: {user_id}")
+        await update.message.reply_text(
+            "Sorry, you're not authorized to use this bot. Please contact the bot owner for access."
+        )
+        return False
+    return True
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a welcome message when the command /start is issued."""
+    if not await check_authorization(update):
+        return
+        
     user = update.effective_user
     user_id = user.id
     
@@ -29,6 +44,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a help message when the command /help is issued."""
+    if not await check_authorization(update):
+        return
+        
     help_text = """
 Available commands:
 /start - Start the conversation
@@ -52,6 +70,9 @@ Just type any message to chat with the current agent!
 
 async def agents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Display buttons to select different agents."""
+    if not await check_authorization(update):
+        return
+        
     keyboard = []
     
     # Create a button for each agent
@@ -64,12 +85,19 @@ async def agents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button presses."""
     query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Check authorization for button callbacks
+    if user_id not in config.ALLOWED_USERS:
+        logger.warning(f"Unauthorized button press attempt from user ID: {user_id}")
+        await query.answer("You are not authorized to use this bot.", show_alert=True)
+        return
+        
     await query.answer()
     
     # Extract the agent ID from the callback data
     if query.data.startswith("agent_"):
         agent_id = query.data[6:]  # Remove 'agent_' prefix
-        user_id = query.from_user.id
         
         # Get user data
         user_data = get_user_data(user_id)
@@ -87,6 +115,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reset the conversation with the current agent."""
+    if not await check_authorization(update):
+        return
+        
     user_id = update.effective_user.id
     
     # Get user data
@@ -106,6 +137,9 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def meal_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Generate and send a personalized meal plan."""
+    if not await check_authorization(update):
+        return
+        
     user_id = update.effective_user.id
     
     # Get user data using your utility function
@@ -198,6 +232,9 @@ async def meal_plan_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming messages and respond using the selected agent's personality."""
+    if not await check_authorization(update):
+        return
+        
     user_id = update.effective_user.id
     user_message = update.message.text
     
@@ -245,26 +282,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         for restriction in possible_restrictions:
                             # Clean up the restriction
                             clean_restriction = restriction.strip().strip(".:!?")
-                            if clean_restriction and len(clean_restriction) > 2:
+                            if clean_restriction and len(clean_restriction) > 2:  # Avoid single letters
                                 restrictions.append(clean_restriction)
         
-        # Import the chef agent class directly
+        # Create a specialized prompt for meal planning
         from agents.chef import ChefAgent
         chef_agent = ChefAgent()
-        
-        # Create a specialized prompt for meal planning
         meal_plan_prompt = chef_agent.format_meal_plan_prompt(
             preferences=preferences if preferences else None,
             restrictions=restrictions if restrictions else None,
             servings=servings
         )
-        
-        await update.message.reply_text(
-            "I'll create a weekly meal plan for you. This might take a minute..."
-        )
-        
-        # Send typing action
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         
         # Create system message with the chef's system prompt
         messages = [
@@ -272,78 +300,62 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             {"role": "user", "content": meal_plan_prompt}
         ]
         
-        try:
-            # Use a longer max_tokens value for meal plans
-            raw_meal_plan = openai_service.generate_response(
-                messages=messages,
-                max_tokens=2000,
-                temperature=0.7
-            )
-            
-            # Add to conversation history
-            user_data["conversations"]["chef"].append({"role": "assistant", "content": raw_meal_plan})
-            update_user_data(user_id, user_data)
-            
-            # Parse the response
-            structured_plan = chef_agent.parse_meal_plan_response(raw_meal_plan)
-            
-            # Format the structured plan into multiple messages
-            message_parts = chef_agent.format_structured_meal_plan(structured_plan)
-            
-            # Log information about the message parts
-            logger.info(f"Meal plan split into {len(message_parts)} parts")
-            for i, part in enumerate(message_parts):
-                logger.info(f"Part {i+1} length: {len(part)} characters")
-            
-            # Send each part as a separate message
-            for part in message_parts:
-                if part.strip():  # Only send non-empty parts
-                    await update.message.reply_text(part)
-                    # Brief delay to maintain message order
-                    await asyncio.sleep(0.5)
-            
-            return
-            
-        except Exception as e:
-            logger.error(f"Error generating meal plan: {e}")
-            await update.message.reply_text(
-                "I'm sorry, I encountered an error while creating your meal plan. Please try again later."
-            )
-            return
+        # Call OpenAI API through your service
+        raw_meal_plan = openai_service.generate_response(
+            messages=messages,
+            max_tokens=2000,  # Increased token limit
+            temperature=chef_agent.temperature
+        )
+        
+        # Add to conversation history
+        user_data["conversations"][current_agent_id].append({"role": "user", "content": meal_plan_prompt})
+        user_data["conversations"][current_agent_id].append({"role": "assistant", "content": raw_meal_plan})
+        update_user_data(user_id, user_data)
+        
+        # Parse the response
+        structured_plan = chef_agent.parse_meal_plan_response(raw_meal_plan)
+        
+        # Format the structured plan into multiple messages
+        message_parts = chef_agent.format_structured_meal_plan(structured_plan)
+        
+        # Send each part as a separate message
+        for part in message_parts:
+            if part.strip():  # Only send non-empty parts
+                await update.message.reply_text(part)
+                # Brief delay to maintain message order
+                await asyncio.sleep(0.5)
+        
+        return
     
-    # Regular message handling for normal conversations
-    # Prepare messages for OpenAI API
+    # Get the conversation history for the current agent
+    conversation_history = user_data["conversations"][current_agent_id]
+    
+    # Create the messages list for the API call
     messages = [
-        {"role": "system", "content": current_agent["system_prompt"]}
+        {"role": "system", "content": current_agent["system_prompt"]},
+        *conversation_history[-config.MAX_HISTORY_LENGTH:]  # Only use the last N messages
     ]
     
-    # Add conversation history, limited to last 10 messages to manage token usage
-    conversation_history = user_data["conversations"][current_agent_id]
-    if len(conversation_history) > 10:
-        conversation_history = conversation_history[-10:]
-        user_data["conversations"][current_agent_id] = conversation_history
-    
-    messages.extend(conversation_history)
+    # Send typing action
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     try:
-        # Send typing action to show the bot is processing
-        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-        
-        # Call OpenAI API
-        ai_response = openai_service.generate_response(
+        # Call OpenAI API through your service
+        response = openai_service.generate_response(
             messages=messages,
+            max_tokens=config.DEFAULT_MAX_TOKENS,
             temperature=current_agent["temperature"]
         )
         
-        # Add assistant response to history
-        user_data["conversations"][current_agent_id].append({"role": "assistant", "content": ai_response})
+        # Add the response to the conversation history
+        user_data["conversations"][current_agent_id].append({"role": "assistant", "content": response})
         update_user_data(user_id, user_data)
         
-        # Send the response back to the user
-        await update.message.reply_text(ai_response)
+        # Send the response
+        await update.message.reply_text(response)
         
     except Exception as e:
-        logger.error(f"Error while processing message: {e}")
+        logger.error(f"Error generating response: {e}")
         await update.message.reply_text(
-            "I'm sorry, I encountered an error while processing your request. Please try again later."
+            "I'm sorry, I encountered an error while processing your message. Please try again later."
         )
